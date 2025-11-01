@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slot-it Playground</title>
+  <style>
+    body {
+      font-family: monospace;
+      margin: 2em;
+      background: #f5f5f5;
+    }
+    a {
+      display: block;
+      margin-bottom: 1em;
+    }
+  </style>
+</head>
+<body>
+  <a href="https://github.com/slot-it/slot-it.github.io">slot-it on GitHub</a>
+  <slot-it>
+    <div>Content A</div>
+    <div>Content B</div>
+    <div>Content C</div>
+  </slot-it>
+
+  <script>
+    const createElement = (tag, props = {}) => Object.assign(document.createElement(tag), props);
+    const CELL_ID_PATTERN = /cell_(-?\d+)_(-?\d+)/;
+    
+    const parseCellId = (id) => {
+      const match = id.match(CELL_ID_PATTERN);
+      return match ? [parseInt(match[1]), parseInt(match[2])] : [0, 0];
+    };
+
+    class SlotCell extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.boundHandleUpdate = this.handleUpdate.bind(this);
+      }
+
+      connectedCallback() {
+        this.render();
+        this.addEventListener('update', this.boundHandleUpdate);
+      }
+
+      disconnectedCallback() {
+        this.removeEventListener('update', this.boundHandleUpdate);
+      }
+
+      render() {
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host {
+              display: block;
+              border: 1px solid #ccc;
+              padding: 1em;
+              min-width: 100px;
+              min-height: 100px;
+              background: white;
+              position: relative;
+            }
+            :host([active]) {
+              background: #e3f2fd;
+              border-color: #2196f3;
+            }
+            :host([active])::before {
+              content: '►';
+              position: absolute;
+              top: 0.25em;
+              left: 0.25em;
+              color: #2196f3;
+              font-weight: bold;
+            }
+            .coords {
+              position: absolute;
+              bottom: 0.25em;
+              right: 0.25em;
+              font-size: 0.7em;
+              color: #999;
+            }
+            .edge {
+              position: absolute;
+              top: 0.25em;
+              right: 0.25em;
+              font-size: 0.7em;
+              color: #f44336;
+            }
+          </style>
+          <slot></slot>
+          <div class="coords">${this.x},${this.y}</div>
+          ${this.hasAttribute('edge') ? `<div class="edge">${this.getAttribute('edge')}</div>` : ''}
+        `;
+      }
+
+      get x() {
+        return parseCellId(this.id)[0];
+      }
+
+      get y() {
+        return parseCellId(this.id)[1];
+      }
+
+      handleUpdate(event) {
+        const { activePosition } = event.detail;
+        const isActive = activePosition[0] === this.x && activePosition[1] === this.y;
+        
+        if (isActive) {
+          this.setAttribute('active', '');
+        } else {
+          this.removeAttribute('active');
+        }
+        
+        this.render();
+      }
+    }
+
+    class SlotIt extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.position = [0, 0];
+        this.cells = new Map();
+      }
+
+      connectedCallback() {
+        this.setupKeyboard();
+        this.initGrid();
+        this.render();
+        this.broadcastUpdate();
+      }
+
+      setupKeyboard() {
+        this.keyHandler = (e) => {
+          const moves = {
+            'ArrowUp': [0, -1],
+            'ArrowDown': [0, 1],
+            'ArrowLeft': [-1, 0],
+            'ArrowRight': [1, 0],
+            'Numpad8': [0, -1],
+            'Numpad9': [1, -1],
+            'Numpad6': [1, 0],
+            'Numpad3': [1, 1],
+            'Numpad2': [0, 1],
+            'Numpad1': [-1, 1],
+            'Numpad4': [-1, 0],
+            'Numpad7': [-1, -1]
+          };
+
+          const delta = moves[e.key];
+          if (delta) {
+            e.preventDefault();
+            this.move(delta[0], delta[1]);
+          }
+        };
+        document.addEventListener('keydown', this.keyHandler);
+      }
+
+      disconnectedCallback() {
+        if (this.keyHandler) {
+          document.removeEventListener('keydown', this.keyHandler);
+        }
+      }
+
+      initGrid() {
+        for (let y = -1; y <= 1; y++) {
+          for (let x = -1; x <= 1; x++) {
+            this.createCell(x, y);
+          }
+        }
+        this.updateEdgeFlags();
+      }
+
+      createCell(x, y) {
+        const id = `cell_${x}_${y}`;
+        if (!this.cells.has(id)) {
+          const cell = createElement('slot-cell', { id });
+          this.cells.set(id, cell);
+        }
+        return this.cells.get(id);
+      }
+
+      getBounds() {
+        const positions = Array.from(this.cells.keys()).map(parseCellId);
+
+        return {
+          minX: Math.min(...positions.map(p => p[0])),
+          maxX: Math.max(...positions.map(p => p[0])),
+          minY: Math.min(...positions.map(p => p[1])),
+          maxY: Math.max(...positions.map(p => p[1]))
+        };
+      }
+
+      updateEdgeFlags() {
+        const { minX, maxX, minY, maxY } = this.getBounds();
+
+        this.cells.forEach((cell, id) => {
+          const [x, y] = parseCellId(id);
+
+          let edge = '';
+          if (y === minY) edge += 'N';
+          if (y === maxY) edge += 'S';
+          if (x === minX) edge += 'W';
+          if (x === maxX) edge += 'E';
+
+          if (edge) {
+            cell.setAttribute('edge', edge);
+          } else {
+            cell.removeAttribute('edge');
+          }
+        });
+      }
+
+      move(dx, dy) {
+        const newX = this.position[0] + dx;
+        const newY = this.position[1] + dy;
+        const targetId = `cell_${newX}_${newY}`;
+
+        if (!this.cells.has(targetId)) {
+          this.expandGrid(newX, newY);
+        }
+
+        this.position = [newX, newY];
+        this.broadcastUpdate();
+      }
+
+      expandGrid(targetX, targetY) {
+        const { minX, maxX, minY, maxY } = this.getBounds();
+
+        const newMinY = targetY < minY ? targetY : minY;
+        const newMaxY = targetY > maxY ? targetY : maxY;
+        const newMinX = targetX < minX ? targetX : minX;
+        const newMaxX = targetX > maxX ? targetX : maxX;
+
+        for (let y = newMinY; y <= newMaxY; y++) {
+          for (let x = newMinX; x <= newMaxX; x++) {
+            this.createCell(x, y);
+          }
+        }
+
+        this.updateEdgeFlags();
+        this.render();
+      }
+
+      render() {
+        const { minX, maxX, minY, maxY } = this.getBounds();
+
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host {
+              display: block;
+            }
+            .grid {
+              display: grid;
+              grid-template-columns: repeat(${maxX - minX + 1}, auto);
+              gap: 0;
+              width: fit-content;
+            }
+          </style>
+          <div class="grid"></div>
+        `;
+
+        const grid = this.shadowRoot.querySelector('.grid');
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
+            const id = `cell_${x}_${y}`;
+            const cell = this.cells.get(id);
+            if (cell) {
+              grid.appendChild(cell);
+            }
+          }
+        }
+      }
+
+      broadcastUpdate() {
+        const event = new CustomEvent('update', {
+          detail: {
+            activePosition: this.position,
+            gridBounds: this.getBounds()
+          },
+          bubbles: true
+        });
+
+        this.cells.forEach(cell => cell.dispatchEvent(event));
+      }
+    }
+
+    customElements.define('slot-cell', SlotCell);
+    customElements.define('slot-it', SlotIt);
+  </script>
+</body>
+</html>
