@@ -31,11 +31,16 @@
       constructor() {
         super();
         this.attachShadow({ mode: 'open' });
+        this.boundHandleUpdate = this.handleUpdate.bind(this);
       }
 
       connectedCallback() {
         this.render();
-        this.shadowRoot.host.addEventListener('update', this.handleUpdate.bind(this));
+        this.addEventListener('update', this.boundHandleUpdate);
+      }
+
+      disconnectedCallback() {
+        this.removeEventListener('update', this.boundHandleUpdate);
       }
 
       render() {
@@ -172,16 +177,22 @@
         return this.cells.get(id);
       }
 
-      updateEdgeFlags() {
+      getBounds() {
         const positions = Array.from(this.cells.keys()).map(id => {
           const match = id.match(/cell_(-?\d+)_(-?\d+)/);
           return [parseInt(match[1]), parseInt(match[2])];
         });
 
-        const minX = Math.min(...positions.map(p => p[0]));
-        const maxX = Math.max(...positions.map(p => p[0]));
-        const minY = Math.min(...positions.map(p => p[1]));
-        const maxY = Math.max(...positions.map(p => p[1]));
+        return {
+          minX: Math.min(...positions.map(p => p[0])),
+          maxX: Math.max(...positions.map(p => p[0])),
+          minY: Math.min(...positions.map(p => p[1])),
+          maxY: Math.max(...positions.map(p => p[1]))
+        };
+      }
+
+      updateEdgeFlags() {
+        const { minX, maxX, minY, maxY } = this.getBounds();
 
         this.cells.forEach((cell, id) => {
           const match = id.match(/cell_(-?\d+)_(-?\d+)/);
@@ -216,51 +227,16 @@
       }
 
       expandGrid(targetX, targetY) {
-        const positions = Array.from(this.cells.keys()).map(id => {
-          const match = id.match(/cell_(-?\d+)_(-?\d+)/);
-          return [parseInt(match[1]), parseInt(match[2])];
-        });
+        const { minX, maxX, minY, maxY } = this.getBounds();
 
-        const minX = Math.min(...positions.map(p => p[0]));
-        const maxX = Math.max(...positions.map(p => p[0]));
-        const minY = Math.min(...positions.map(p => p[1]));
-        const maxY = Math.max(...positions.map(p => p[1]));
+        const newMinY = targetY < minY ? targetY : minY;
+        const newMaxY = targetY > maxY ? targetY : maxY;
+        const newMinX = targetX < minX ? targetX : minX;
+        const newMaxX = targetX > maxX ? targetX : maxX;
 
-        if (targetY < minY) {
-          for (let x = minX; x <= maxX; x++) {
-            this.createCell(x, minY - 1);
-          }
-        }
-        if (targetY > maxY) {
-          for (let x = minX; x <= maxX; x++) {
-            this.createCell(x, maxY + 1);
-          }
-        }
-        if (targetX < minX) {
-          for (let y = minY; y <= maxY; y++) {
-            this.createCell(minX - 1, y);
-          }
-        }
-        if (targetX > maxX) {
-          for (let y = minY; y <= maxY; y++) {
-            this.createCell(maxX + 1, y);
-          }
-        }
-
-        if (targetX < minX || targetX > maxX || targetY < minY || targetY > maxY) {
-          if (targetX < minX) {
-            for (let y = minY - 1; y <= maxY + 1; y++) {
-              if (!this.cells.has(`cell_${minX - 1}_${y}`)) {
-                this.createCell(minX - 1, y);
-              }
-            }
-          }
-          if (targetX > maxX) {
-            for (let y = minY - 1; y <= maxY + 1; y++) {
-              if (!this.cells.has(`cell_${maxX + 1}_${y}`)) {
-                this.createCell(maxX + 1, y);
-              }
-            }
+        for (let y = newMinY; y <= newMaxY; y++) {
+          for (let x = newMinX; x <= newMaxX; x++) {
+            this.createCell(x, y);
           }
         }
 
@@ -269,15 +245,7 @@
       }
 
       render() {
-        const positions = Array.from(this.cells.keys()).map(id => {
-          const match = id.match(/cell_(-?\d+)_(-?\d+)/);
-          return [parseInt(match[1]), parseInt(match[2])];
-        });
-
-        const minX = Math.min(...positions.map(p => p[0]));
-        const maxX = Math.max(...positions.map(p => p[0]));
-        const minY = Math.min(...positions.map(p => p[1]));
-        const maxY = Math.max(...positions.map(p => p[1]));
+        const { minX, maxX, minY, maxY } = this.getBounds();
 
         this.shadowRoot.innerHTML = `
           <style>
@@ -307,20 +275,10 @@
       }
 
       broadcastUpdate() {
-        const positions = Array.from(this.cells.keys()).map(id => {
-          const match = id.match(/cell_(-?\d+)_(-?\d+)/);
-          return [parseInt(match[1]), parseInt(match[2])];
-        });
-
         const event = new CustomEvent('update', {
           detail: {
             activePosition: this.position,
-            gridBounds: {
-              minX: Math.min(...positions.map(p => p[0])),
-              maxX: Math.max(...positions.map(p => p[0])),
-              minY: Math.min(...positions.map(p => p[1])),
-              maxY: Math.max(...positions.map(p => p[1]))
-            }
+            gridBounds: this.getBounds()
           },
           bubbles: true
         });
