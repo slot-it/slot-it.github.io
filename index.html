@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Slot-it Playground</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: dark light;
+      --grid-gap: 6px;
+      --cell-size: 72px;
+      --border-default: #5a5a5a;
+      --border-active: #00c2ff;
+      --border-edge: #ff8a00;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #111;
+      color: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      padding: 32px;
+    }
+
+    main {
+      width: min(680px, 100%);
+      display: grid;
+      gap: 24px;
+    }
+
+    a {
+      color: #4dc3ff;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 1.75rem;
+    }
+
+    header p {
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Slot-it Playground</h1>
+      <p>
+        Keyboard navigation demo for the custom <code>&lt;slot-it&gt;</code> element.
+        Source on
+        <a href="https://github.com/slot-it/slot-it.github.io" target="_blank" rel="noopener noreferrer">GitHub</a>.
+      </p>
+    </header>
+    <slot-it></slot-it>
+  </main>
+
+  <script>
+    const createElement = (tag, props = {}) => Object.assign(document.createElement(tag), props);
+
+    class SlotCell extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" });
+        this.onUpdate = this.onUpdate.bind(this);
+        this.cellX = 0;
+        this.cellY = 0;
+      }
+
+      connectedCallback() {
+        if (!this.shadowRoot.hasChildNodes()) {
+          this.render();
+        }
+        this.setPosition(this.cellX, this.cellY);
+        const host = this.getSlotItHost();
+        if (host && !this.hostRef) {
+          host.addEventListener("update", this.onUpdate);
+          this.hostRef = host;
+        }
+        this.renderState({ active: [Number.NaN, Number.NaN], edges: {} });
+      }
+
+      disconnectedCallback() {
+        if (this.hostRef) {
+          this.hostRef.removeEventListener("update", this.onUpdate);
+          this.hostRef = null;
+        }
+      }
+
+      getSlotItHost() {
+        const root = this.getRootNode();
+        return root && root.host instanceof HTMLElement && root.host.tagName.toLowerCase() === "slot-it"
+          ? root.host
+          : this.closest("slot-it");
+      }
+
+      setPosition(x, y) {
+        this.cellX = x;
+        this.cellY = y;
+        const id = `cell_${x}_${y}`;
+        this.id = id;
+        this.dataset.x = String(x);
+        this.dataset.y = String(y);
+        if (this.coordinateLabel) {
+          this.coordinateLabel.textContent = `[${x}, ${y}]`;
+        }
+        this.setAttribute("aria-label", `Grid cell ${x}, ${y}`);
+      }
+
+      onUpdate(event) {
+        const detail = event.detail;
+        if (!detail) {
+          return;
+        }
+        this.renderState(detail);
+      }
+
+      renderState(detail) {
+        const key = this.id;
+        const active = Array.isArray(detail.active) ? detail.active : [Number.NaN, Number.NaN];
+        const edgeMap = detail.edges || {};
+        const isActive = active[0] === this.cellX && active[1] === this.cellY;
+        this.toggleAttribute("active", isActive);
+        if (this.marker) {
+          this.marker.textContent = isActive ? "@" : "";
+        }
+        const edgeValue = edgeMap[key];
+        if (edgeValue) {
+          this.setAttribute("edge", edgeValue);
+        } else {
+          this.removeAttribute("edge");
+        }
+      }
+
+      render() {
+        const style = createElement("style", {
+          textContent: `
+            :host {
+              display: block;
+              border: 2px solid var(--border-default);
+              border-radius: 6px;
+              background: rgba(255, 255, 255, 0.06);
+              min-width: var(--cell-size);
+              min-height: var(--cell-size);
+              box-sizing: border-box;
+              transition: border-color 0.15s ease, box-shadow 0.15s ease;
+              position: relative;
+            }
+            :host([edge*="N"]) { border-top-color: var(--border-edge); }
+            :host([edge*="E"]) { border-right-color: var(--border-edge); }
+            :host([edge*="S"]) { border-bottom-color: var(--border-edge); }
+            :host([edge*="W"]) { border-left-color: var(--border-edge); }
+            :host([active]) {
+              border-color: var(--border-active);
+              box-shadow: 0 0 12px rgba(0, 194, 255, 0.4);
+            }
+            .cell {
+              display: grid;
+              place-items: center;
+              height: 100%;
+              width: 100%;
+              gap: 4px;
+              text-align: center;
+              font-size: 0.9rem;
+              letter-spacing: 0.5px;
+            }
+            .marker {
+              font-weight: 700;
+              font-size: 1.2rem;
+              min-height: 1.2rem;
+            }
+            .coordinate {
+              font-size: 0.8rem;
+              opacity: 0.75;
+            }
+            slot::slotted(*) {
+              pointer-events: none;
+            }
+          `
+        });
+        const wrapper = createElement("div", { className: "cell" });
+        this.marker = createElement("span", { className: "marker" });
+        this.coordinateLabel = createElement("span", { className: "coordinate" });
+        const slot = createElement("slot");
+        wrapper.append(this.marker, this.coordinateLabel, slot);
+        this.shadowRoot.append(style, wrapper);
+      }
+    }
+
+    customElements.define("slot-cell", SlotCell);
+
+    class SlotIt extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" });
+        this.bounds = { minX: -1, maxX: 1, minY: -1, maxY: 1 };
+        this.active = { x: 0, y: 0 };
+        this.cells = new Map();
+        this.handleKeydown = this.handleKeydown.bind(this);
+        this.expansionPlan = {
+          "0,-1": ["north"],
+          "1,0": ["east", "south"],
+          "0,1": ["east", "south"],
+          "-1,0": ["west", "north"],
+          "1,-1": ["east", "north"],
+          "-1,1": ["west", "south"],
+          "1,1": ["east", "south"],
+          "-1,-1": ["west", "north"]
+        };
+      }
+
+      connectedCallback() {
+        if (!this.shadowRoot.hasChildNodes()) {
+          this.render();
+        }
+        if (!this.initialized) {
+          this.buildInitialGrid();
+          this.initialized = true;
+        }
+        if (!this.hasAttribute("tabindex")) {
+          this.setAttribute("tabindex", "0");
+        }
+        this.addEventListener("keydown", this.handleKeydown);
+        this.setAttribute("role", "grid");
+        queueMicrotask(() => this.focus());
+      }
+
+      disconnectedCallback() {
+        this.removeEventListener("keydown", this.handleKeydown);
+      }
+
+      render() {
+        const style = createElement("style", {
+          textContent: `
+            :host {
+              display: inline-block;
+              padding: 12px;
+              background: rgba(255, 255, 255, 0.05);
+              border-radius: 12px;
+              border: 1px solid rgba(255, 255, 255, 0.15);
+              outline: none;
+            }
+            :host(:focus-visible) {
+              box-shadow: 0 0 0 3px rgba(0, 194, 255, 0.4);
+            }
+            .grid {
+              display: grid;
+              gap: var(--grid-gap);
+            }
+            footer {
+              margin-top: 16px;
+              font-size: 0.85rem;
+              opacity: 0.75;
+              line-height: 1.4;
+            }
+          `
+        });
+        this.grid = createElement("div", { className: "grid" });
+        this.status = createElement("footer");
+        this.shadowRoot.append(style, this.grid, this.status);
+        this.updateStatus();
+      }
+
+      buildInitialGrid() {
+        this.bounds = { minX: -1, maxX: 1, minY: -1, maxY: 1 };
+        this.active = { x: 0, y: 0 };
+        for (let y = this.bounds.minY; y <= this.bounds.maxY; y += 1) {
+          for (let x = this.bounds.minX; x <= this.bounds.maxX; x += 1) {
+            this.createCell(x, y);
+          }
+        }
+        this.syncGridDom();
+        this.broadcastUpdate("init");
+      }
+
+      handleKeydown(event) {
+        const direction = this.getDirectionFromEvent(event);
+        if (!direction) {
+          return;
+        }
+        event.preventDefault();
+        this.move(direction.dx, direction.dy);
+      }
+
+      getDirectionFromEvent(event) {
+        const map = {
+          ArrowUp: { dx: 0, dy: -1 },
+          ArrowDown: { dx: 0, dy: 1 },
+          ArrowLeft: { dx: -1, dy: 0 },
+          ArrowRight: { dx: 1, dy: 0 },
+          Numpad8: { dx: 0, dy: -1 },
+          Numpad2: { dx: 0, dy: 1 },
+          Numpad4: { dx: -1, dy: 0 },
+          Numpad6: { dx: 1, dy: 0 },
+          Numpad7: { dx: -1, dy: -1 },
+          Numpad9: { dx: 1, dy: -1 },
+          Numpad1: { dx: -1, dy: 1 },
+          Numpad3: { dx: 1, dy: 1 }
+        };
+        return map[event.code];
+      }
+
+      move(dx, dy) {
+        if (!dx && !dy) {
+          return;
+        }
+        const targetX = this.active.x + dx;
+        const targetY = this.active.y + dy;
+        const expanded = this.expandIfNeeded(dx, dy, targetX, targetY);
+        const key = this.cellKey(targetX, targetY);
+        let cell = this.cells.get(key);
+        if (!cell) {
+          cell = this.createCell(targetX, targetY);
+          this.syncGridDom();
+        }
+        this.active = { x: targetX, y: targetY };
+        this.updateStatus();
+        this.broadcastUpdate(expanded ? "expand-move" : "move");
+      }
+
+      expandIfNeeded(dx, dy, targetX, targetY) {
+        const outOfBounds =
+          targetX < this.bounds.minX ||
+          targetX > this.bounds.maxX ||
+          targetY < this.bounds.minY ||
+          targetY > this.bounds.maxY;
+        if (!outOfBounds) {
+          return false;
+        }
+        const planKey = `${dx},${dy}`;
+        const directions = this.expansionPlan[planKey];
+        if (!directions || !directions.length) {
+          return false;
+        }
+        const unique = new Set(directions);
+        const order = ["west", "east", "north", "south"];
+        let changed = false;
+        for (const dir of order) {
+          if (!unique.has(dir)) {
+            continue;
+          }
+          const applied = this.applyExpansion(dir);
+          changed = applied || changed;
+        }
+        if (changed) {
+          this.syncGridDom();
+          this.updateStatus();
+          this.broadcastUpdate("expand");
+        }
+        return changed;
+      }
+
+      applyExpansion(direction) {
+        switch (direction) {
+          case "north":
+            return this.addRowNorth();
+          case "south":
+            return this.addRowSouth();
+          case "east":
+            return this.addColumnEast();
+          case "west":
+            return this.addColumnWest();
+          default:
+            return false;
+        }
+      }
+
+      addRowNorth() {
+        const newY = this.bounds.minY - 1;
+        for (let x = this.bounds.minX; x <= this.bounds.maxX; x += 1) {
+          this.createCell(x, newY);
+        }
+        this.bounds.minY = newY;
+        return true;
+      }
+
+      addRowSouth() {
+        const newY = this.bounds.maxY + 1;
+        for (let x = this.bounds.minX; x <= this.bounds.maxX; x += 1) {
+          this.createCell(x, newY);
+        }
+        this.bounds.maxY = newY;
+        return true;
+      }
+
+      addColumnEast() {
+        const newX = this.bounds.maxX + 1;
+        for (let y = this.bounds.minY; y <= this.bounds.maxY; y += 1) {
+          this.createCell(newX, y);
+        }
+        this.bounds.maxX = newX;
+        return true;
+      }
+
+      addColumnWest() {
+        const newX = this.bounds.minX - 1;
+        for (let y = this.bounds.minY; y <= this.bounds.maxY; y += 1) {
+          this.createCell(newX, y);
+        }
+        this.bounds.minX = newX;
+        return true;
+      }
+
+      syncGridDom() {
+        if (!this.grid) {
+          return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (let y = this.bounds.minY; y <= this.bounds.maxY; y += 1) {
+          for (let x = this.bounds.minX; x <= this.bounds.maxX; x += 1) {
+            const cell = this.createCell(x, y);
+            fragment.append(cell);
+          }
+        }
+        this.grid.replaceChildren(fragment);
+        const columns = this.bounds.maxX - this.bounds.minX + 1;
+        this.grid.style.gridTemplateColumns = `repeat(${columns}, minmax(var(--cell-size), 1fr))`;
+      }
+
+      createCell(x, y) {
+        const key = this.cellKey(x, y);
+        let cell = this.cells.get(key);
+        if (!cell) {
+          cell = createElement("slot-cell");
+          cell.setPosition(x, y);
+          this.cells.set(key, cell);
+        } else {
+          cell.setPosition(x, y);
+        }
+        return cell;
+      }
+
+      cellKey(x, y) {
+        return `cell_${x}_${y}`;
+      }
+
+      computeEdges() {
+        const edges = {};
+        for (let y = this.bounds.minY; y <= this.bounds.maxY; y += 1) {
+          for (let x = this.bounds.minX; x <= this.bounds.maxX; x += 1) {
+            let value = "";
+            if (y === this.bounds.minY) {
+              value += "N";
+            }
+            if (x === this.bounds.maxX) {
+              value += "E";
+            }
+            if (y === this.bounds.maxY) {
+              value += "S";
+            }
+            if (x === this.bounds.minX) {
+              value += "W";
+            }
+            if (value) {
+              edges[this.cellKey(x, y)] = value;
+            }
+          }
+        }
+        return edges;
+      }
+
+      broadcastUpdate(reason) {
+        const detail = {
+          reason,
+          active: [this.active.x, this.active.y],
+          bounds: { ...this.bounds },
+          edges: this.computeEdges()
+        };
+        this.dispatchEvent(new CustomEvent("update", { detail }));
+      }
+
+      updateStatus() {
+        if (!this.status) {
+          return;
+        }
+        const width = this.bounds.maxX - this.bounds.minX + 1;
+        const height = this.bounds.maxY - this.bounds.minY + 1;
+  this.status.textContent = `Grid size: ${width} x ${height} | Active cell: [${this.active.x}, ${this.active.y}]`;
+      }
+    }
+
+    customElements.define("slot-it", SlotIt);
+  </script>
+</body>
+</html>
