@@ -26,6 +26,12 @@
 
   <script>
     const createElement = (tag, props = {}) => Object.assign(document.createElement(tag), props);
+    const CELL_ID_PATTERN = /cell_(-?\d+)_(-?\d+)/;
+    
+    const parseCellId = (id) => {
+      const match = id.match(CELL_ID_PATTERN);
+      return match ? [parseInt(match[1]), parseInt(match[2])] : [0, 0];
+    };
 
     class SlotCell extends HTMLElement {
       constructor() {
@@ -89,13 +95,11 @@
       }
 
       get x() {
-        const match = this.id.match(/cell_(-?\d+)_(-?\d+)/);
-        return match ? parseInt(match[1]) : 0;
+        return parseCellId(this.id)[0];
       }
 
       get y() {
-        const match = this.id.match(/cell_(-?\d+)_(-?\d+)/);
-        return match ? parseInt(match[2]) : 0;
+        return parseCellId(this.id)[1];
       }
 
       handleUpdate(event) {
@@ -178,10 +182,7 @@
       }
 
       getBounds() {
-        const positions = Array.from(this.cells.keys()).map(id => {
-          const match = id.match(/cell_(-?\d+)_(-?\d+)/);
-          return [parseInt(match[1]), parseInt(match[2])];
-        });
+        const positions = Array.from(this.cells.keys()).map(parseCellId);
 
         return {
           minX: Math.min(...positions.map(p => p[0])),
@@ -195,9 +196,7 @@
         const { minX, maxX, minY, maxY } = this.getBounds();
 
         this.cells.forEach((cell, id) => {
-          const match = id.match(/cell_(-?\d+)_(-?\d+)/);
-          const x = parseInt(match[1]);
-          const y = parseInt(match[2]);
+          const [x, y] = parseCellId(id);
 
           let edge = '';
           if (y === minY) edge += 'N';
